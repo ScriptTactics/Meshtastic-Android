@@ -25,6 +25,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentTransaction
+import androidx.navigation.NavHostController
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import com.geeksville.mesh.android.BindFailedException
 import com.geeksville.mesh.android.GeeksvilleApplication
@@ -113,7 +114,6 @@ val utf8: Charset = Charset.forName("UTF-8")
 
 @AndroidEntryPoint
 class MainActivity : BaseActivity(), Logging {
-
     private lateinit var binding: ActivityMainBinding
 
     // Used to schedule a coroutine in the GUI thread
@@ -152,7 +152,7 @@ class MainActivity : BaseActivity(), Logging {
         TabInfo(
             "Map",
             R.drawable.ic_twotone_map_24,
-            MapFragment()
+            UsersFragment()
         ),
         TabInfo(
             "Channel",
@@ -278,7 +278,6 @@ class MainActivity : BaseActivity(), Logging {
         setContentView(binding.root)
 
         initToolbar()
-
         binding.pager.adapter = tabsAdapter
         binding.pager.isUserInputEnabled =
             false // Gestures for screen switching doesn't work so good with the map view
