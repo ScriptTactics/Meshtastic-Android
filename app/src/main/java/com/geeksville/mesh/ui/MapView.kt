@@ -2,6 +2,7 @@ package com.geeksville.mesh.ui
 
 import android.content.Context
 import android.content.res.Resources
+import android.view.View
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -23,34 +24,49 @@ import com.geeksville.mesh.R
 import com.geeksville.mesh.model.map.CustomOverlayManager
 import com.geeksville.mesh.ui.MapConstants.Companion.DEFAULT_MAX_ZOOM
 import com.geeksville.mesh.ui.MapConstants.Companion.DEFAULT_MIN_ZOOM
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.views.CustomZoomButtonsController
+import org.osmdroid.views.overlay.CopyrightOverlay
 
 @Preview(showBackground = true)
 @Composable
 fun MapView(
-    modifier: Modifier = Modifier,
-    onLoad: ((map: MapView) -> Unit)? = null
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     Configuration.getInstance().userAgentValue =
         BuildConfig.APPLICATION_ID // Required to get online tiles
     val mapViewState = rememberMapViewWithLifecycle()
     AndroidView(
-        { mapViewState },
-        modifier,
-    ) { mapView ->
-        onLoad?.invoke(mapView)
-        setupMapProperties(mapView, context)
+        { mapViewState }) { mapView ->
+        CoroutineScope(Dispatchers.Main).launch {
+            setupMapProperties(mapView, context)
+        }
     }
     MapStyleButton()
     DownloadButton()
 }
 
+
+/**
+ * Adds copyright to map depending on what source is showing
+ */
+private fun addCopyright(map: MapView, context: Context) {
+    if (map.tileProvider.tileSource.copyrightNotice != null) {
+        val copyrightNotice: String = map.tileProvider.tileSource.copyrightNotice
+        val copyrightOverlay = CopyrightOverlay(context)
+        copyrightOverlay.setCopyrightNotice(copyrightNotice)
+        map.overlays.add(copyrightOverlay)
+    }
+}
+
 private fun setupMapProperties(mapView: MapView, context: Context) {
-    //  private var nodePositions = listOf<MarkerWithLabel>()
-    //   private var wayPoints = listOf<MarkerWithLabel>()
+    // private var nodePositions = listOf<MarkerWithLabel>()
+    // private var wayPoints = listOf<MarkerWithLabel>()
     mapView.setTileSource(TileSourceFactory.DEFAULT_TILE_SOURCE)
     mapView.setDestroyMode(false) // keeps map instance alive when in the background.
     mapView.isVerticalMapRepetitionEnabled = false // disables map repetition
@@ -67,6 +83,7 @@ private fun setupMapProperties(mapView: MapView, context: Context) {
     mapView.maxZoomLevel = DEFAULT_MAX_ZOOM
     mapView.setMultiTouchControls(true) // Sets gesture controls to true.
     mapView.zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER) // Disables default +/- button for zooming
+    mapView.controller.zoomTo(DEFAULT_MIN_ZOOM)
 //        mapView.addMapListener(object : MapListener {
 //            override fun onScroll(event: ScrollEvent): Boolean {
 //                if (binding.cacheLayout.visibility == View.VISIBLE) {

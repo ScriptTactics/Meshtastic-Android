@@ -18,7 +18,6 @@ fun rememberMapViewWithLifecycle(): MapView {
             id = R.id.map
         }
     }
-
     // Makes MapView follow the lifecycle of this composable
     val lifecycleObserver = rememberMapLifecycleObserver(mapView)
     val lifecycle = LocalLifecycleOwner.current.lifecycle
