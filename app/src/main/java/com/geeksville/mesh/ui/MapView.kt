@@ -1,5 +1,6 @@
 package com.geeksville.mesh.ui
 
+import android.content.Context
 import android.content.res.Resources
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -9,14 +10,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import com.geeksville.mesh.BuildConfig
 import org.osmdroid.views.MapView
 import com.geeksville.mesh.R
+import com.geeksville.mesh.model.map.CustomOverlayManager
+import com.geeksville.mesh.ui.MapConstants.Companion.DEFAULT_MAX_ZOOM
+import com.geeksville.mesh.ui.MapConstants.Companion.DEFAULT_MIN_ZOOM
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.views.CustomZoomButtonsController
 
 @Preview(showBackground = true)
 @Composable
@@ -24,13 +33,52 @@ fun MapView(
     modifier: Modifier = Modifier,
     onLoad: ((map: MapView) -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    Configuration.getInstance().userAgentValue =
+        BuildConfig.APPLICATION_ID // Required to get online tiles
     val mapViewState = rememberMapViewWithLifecycle()
     AndroidView(
         { mapViewState },
         modifier,
-    ) { mapView -> onLoad?.invoke(mapView) }
+    ) { mapView ->
+        onLoad?.invoke(mapView)
+        setupMapProperties(mapView, context)
+    }
     MapStyleButton()
     DownloadButton()
+}
+
+private fun setupMapProperties(mapView: MapView, context: Context) {
+    //  private var nodePositions = listOf<MarkerWithLabel>()
+    //   private var wayPoints = listOf<MarkerWithLabel>()
+    mapView.setTileSource(TileSourceFactory.DEFAULT_TILE_SOURCE)
+    mapView.setDestroyMode(false) // keeps map instance alive when in the background.
+    mapView.isVerticalMapRepetitionEnabled = false // disables map repetition
+    mapView.overlayManager = CustomOverlayManager.create(mapView, context)
+    mapView.setScrollableAreaLimitLatitude(
+        mapView.overlayManager.tilesOverlay.bounds.actualNorth,
+        mapView.overlayManager.tilesOverlay.bounds.actualSouth,
+        0
+    ) // bounds scrollable map
+    mapView.isTilesScaledToDpi =
+        true // scales the map tiles to the display density of the screen
+    mapView.minZoomLevel =
+        DEFAULT_MIN_ZOOM // sets the minimum zoom level (the furthest out you can zoom)
+    mapView.maxZoomLevel = DEFAULT_MAX_ZOOM
+    mapView.setMultiTouchControls(true) // Sets gesture controls to true.
+    mapView.zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER) // Disables default +/- button for zooming
+//        mapView.addMapListener(object : MapListener {
+//            override fun onScroll(event: ScrollEvent): Boolean {
+//                if (binding.cacheLayout.visibility == View.VISIBLE) {
+//                    generateBoxOverlay(zoomLevelMax)
+//                }
+//                return true
+//            }
+//
+//            override fun onZoom(event: ZoomEvent): Boolean {
+//                return false
+//            }
+//        })
 }
 
 @Composable
@@ -52,7 +100,7 @@ fun MapStyleButton() {
                     color = Color(R.color.unselectedColor)
                 ),
             painter = painterResource(id = R.drawable.ic_twotone_layers_24),
-            contentDescription = Resources.getSystem().getString(R.string.preferences_map_style)
+            contentDescription = R.string.style_selection.toString()
         )
     }
 }
@@ -71,7 +119,7 @@ fun DownloadButton() {
                     color = Color(R.color.buttonColor)
                 ),
             painter = painterResource(id = R.drawable.ic_appintro_arrow),
-            contentDescription = Resources.getSystem().getString(R.string.download_region)
+            contentDescription = R.string.download_region.toString()
         )
     }
 }
