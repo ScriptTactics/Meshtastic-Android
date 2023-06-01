@@ -3,7 +3,6 @@ package com.geeksville.mesh.ui
 import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.bluetooth.BluetoothDevice
-import android.companion.CompanionDeviceManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -13,6 +12,7 @@ import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.RemoteException
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -26,8 +26,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.asLiveData
-import androidx.lifecycle.flowWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.geeksville.mesh.analytics.DataPair
 import com.geeksville.mesh.android.GeeksvilleApplication
 import com.geeksville.mesh.android.Logging
@@ -47,16 +47,17 @@ import com.geeksville.mesh.repository.radio.MockInterface
 import com.geeksville.mesh.repository.usb.UsbRepository
 import com.geeksville.mesh.service.MeshService
 import com.geeksville.mesh.service.SoftwareUpdateService
+import com.geeksville.mesh.util.CompanionDeviceManagerCompat
+import com.geeksville.mesh.util.PendingIntentCompat
 import com.geeksville.mesh.util.anonymize
 import com.geeksville.mesh.util.exceptionReporter
 import com.geeksville.mesh.util.exceptionToSnackbar
+import com.geeksville.mesh.util.getParcelableExtraCompat
 import com.geeksville.mesh.util.onEditorAction
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -75,7 +76,6 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
 
     @Inject
     internal lateinit var locationRepository: LocationRepository
-    private var receivingLocationUpdates: Job? = null
 
     private val myActivity get() = requireActivity() as MainActivity
 
@@ -194,7 +194,7 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
         // We don't want to be notified of our own changes, so turn off listener while making them
         spinner.setSelection(regionIndex, false)
         spinner.onItemSelectedListener = regionSpinnerListener
-        spinner.isEnabled = true
+        spinner.isEnabled = !model.isManaged
 
         // If actively connected possibly let the user update firmware
         refreshUpdateButton(model.isConnected())
@@ -247,10 +247,8 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
             ActivityResultContracts.StartIntentSenderForResult()
         ) {
             it.data
-                ?.getParcelableExtra<BluetoothDevice>(CompanionDeviceManager.EXTRA_DEVICE)
-                ?.let { device ->
-                    onSelected(BTScanModel.BLEDeviceListEntry(device))
-                }
+                ?.getParcelableExtraCompat<BluetoothDevice>(CompanionDeviceManagerCompat.EXTRA_DEVICE)
+                ?.let { device -> onSelected(BTScanModel.BLEDeviceListEntry(device)) }
         }
 
         val requestBackgroundAndCheckLauncher =
@@ -283,15 +281,19 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
         regionAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         spinner.adapter = regionAdapter
 
-        model.ownerName.observe(viewLifecycleOwner) { name ->
-            binding.usernameEditText.isEnabled = !name.isNullOrEmpty()
+        model.ourNodeInfo.asLiveData().observe(viewLifecycleOwner) { node ->
+            val name = node?.user?.longName
+            binding.usernameEditText.isEnabled = !name.isNullOrEmpty() && !model.isManaged
             binding.usernameEditText.setText(name)
+        }
+
+        scanModel.devices.observe(viewLifecycleOwner) { devices ->
+            updateDevicesButtons(devices)
         }
 
         // Only let user edit their name or set software update while connected to a radio
         model.connectionState.observe(viewLifecycleOwner) {
             updateNodeInfo()
-            updateDevicesButtons(scanModel.devices.value)
         }
 
         model.localConfig.asLiveData().observe(viewLifecycleOwner) {
@@ -323,10 +325,6 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
         // Also watch myNodeInfo because it might change later
         model.myNodeInfo.observe(viewLifecycleOwner) {
             updateNodeInfo()
-        }
-
-        scanModel.devices.observe(viewLifecycleOwner) { devices ->
-            updateDevicesButtons(devices)
         }
 
         scanModel.errorText.observe(viewLifecycleOwner) { errMsg ->
@@ -364,17 +362,19 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
             val n = binding.usernameEditText.text.toString().trim()
             model.ourNodeInfo.value?.user?.let {
                 val user = it.copy(longName = n, shortName = getInitials(n))
-                if (n.isNotEmpty()) model.setOwner(user)
+                if (n.isNotEmpty()) model.setOwner(user.toProto())
             }
             requireActivity().hideKeyboard()
         }
 
         // Observe receivingLocationUpdates state and update provideLocationCheckbox
-        if (receivingLocationUpdates?.isActive == true) return
-        else receivingLocationUpdates = locationRepository.receivingLocationUpdates
-            .flowWithLifecycle(lifecycle, Lifecycle.State.STARTED)
-            .onEach { binding.provideLocationCheckbox.isChecked = it }
-            .launchIn(lifecycleScope)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                locationRepository.receivingLocationUpdates.collect {
+                    binding.provideLocationCheckbox.isChecked = it
+                }
+            }
+        }
 
         binding.provideLocationCheckbox.setOnCheckedChangeListener { view, isChecked ->
             // Don't check the box until the system setting changes
@@ -510,12 +510,24 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
         }
     }
 
+    private fun changeDeviceAddress(address: String) {
+        try {
+            model.meshService?.let { service ->
+                MeshService.changeDeviceAddress(requireActivity(), service, address)
+            }
+            scanModel.changeSelectedAddress(address) // if it throws the change will be discarded
+        } catch (ex: RemoteException) {
+            errormsg("changeDeviceSelection failed, probably it is shutting down $ex.message")
+            // ignore the failure and the GUI won't be updating anyways
+        }
+    }
+
     /// Called by the GUI when a new device has been selected by the user
     /// Returns true if we were able to change to that item
     private fun onSelected(it: BTScanModel.DeviceListEntry): Boolean {
         // If the device is paired, let user select it, otherwise start the pairing flow
         if (it.bonded) {
-            scanModel.changeDeviceAddress(it.fullAddress)
+            changeDeviceAddress(it.fullAddress)
             return true
         } else {
             // Handle requesting USB or bluetooth permissions for the device
@@ -529,7 +541,7 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
                         requestBonding(device) { state ->
                             if (state == BluetoothDevice.BOND_BONDED) {
                                 scanModel.setErrorText(getString(R.string.pairing_completed))
-                                scanModel.changeDeviceAddress(it.fullAddress)
+                                changeDeviceAddress(it.fullAddress)
                             } else {
                                 scanModel.setErrorText(getString(R.string.pairing_failed_try_again))
                             }
@@ -546,8 +558,9 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
                     override fun onReceive(context: Context, intent: Intent) {
                         if (BTScanModel.ACTION_USB_PERMISSION == intent.action) {
 
-                            val device: UsbDevice =
-                                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)!!
+                            val device: UsbDevice? =
+                                intent.getParcelableExtraCompat(UsbManager.EXTRA_DEVICE)
+                            val deviceName: String = device?.deviceName ?: "unknown"
 
                             if (intent.getBooleanExtra(
                                     UsbManager.EXTRA_PERMISSION_GRANTED,
@@ -555,9 +568,9 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
                                 )
                             ) {
                                 info("User approved USB access")
-                                scanModel.changeDeviceAddress(it.fullAddress)
+                                changeDeviceAddress(it.fullAddress)
                             } else {
-                                errormsg("USB permission denied for device $device")
+                                errormsg("USB permission denied for device $deviceName")
                             }
                         }
                         // We don't need to stay registered
@@ -565,12 +578,12 @@ class SettingsFragment : ScreenFragment("Settings"), Logging {
                     }
                 }
 
-                val permissionIntent =
-                    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
-                        PendingIntent.getBroadcast(activity, 0, Intent(BTScanModel.ACTION_USB_PERMISSION), 0)
-                    } else {
-                        PendingIntent.getBroadcast(activity, 0, Intent(BTScanModel.ACTION_USB_PERMISSION), PendingIntent.FLAG_IMMUTABLE)
-                    }
+                val permissionIntent = PendingIntent.getBroadcast(
+                    activity,
+                    0,
+                    Intent(BTScanModel.ACTION_USB_PERMISSION),
+                    PendingIntentCompat.FLAG_IMMUTABLE
+                )
                 val filter = IntentFilter(BTScanModel.ACTION_USB_PERMISSION)
                 requireActivity().registerReceiver(usbReceiver, filter)
                 requireContext().usbManager.requestPermission(it.usb.device, permissionIntent)

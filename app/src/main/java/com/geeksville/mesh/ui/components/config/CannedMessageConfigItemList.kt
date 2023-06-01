@@ -26,12 +26,14 @@ import com.geeksville.mesh.ui.components.SwitchPreference
 
 @Composable
 fun CannedMessageConfigItemList(
+    messages: String,
     cannedMessageConfig: CannedMessageConfig,
     enabled: Boolean,
     focusManager: FocusManager,
-    onSaveClicked: (CannedMessageConfig) -> Unit,
+    onSaveClicked: (messages: String, config: CannedMessageConfig) -> Unit,
 ) {
-    var cannedMessageInput by remember(cannedMessageConfig) { mutableStateOf(cannedMessageConfig) }
+    var messagesInput by remember { mutableStateOf(messages) }
+    var cannedMessageInput by remember { mutableStateOf(cannedMessageConfig) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize()
@@ -163,13 +165,28 @@ fun CannedMessageConfigItemList(
         item { Divider() }
 
         item {
+            EditTextPreference(title = "Messages",
+                value = messagesInput,
+                maxSize = 200, // messages max_size:201
+                enabled = enabled,
+                isError = false,
+                keyboardOptions = KeyboardOptions.Default.copy(
+                    keyboardType = KeyboardType.Text, imeAction = ImeAction.Done
+                ),
+                keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                onValueChanged = { messagesInput = it }
+            )
+        }
+
+        item {
             PreferenceFooter(
-                enabled = cannedMessageInput != cannedMessageConfig,
+                enabled = cannedMessageInput != cannedMessageConfig || messagesInput != messages,
                 onCancelClicked = {
                     focusManager.clearFocus()
+                    messagesInput = messages
                     cannedMessageInput = cannedMessageConfig
                 },
-                onSaveClicked = { onSaveClicked(cannedMessageInput) }
+                onSaveClicked = { onSaveClicked(messagesInput,cannedMessageInput) }
             )
         }
     }
@@ -179,9 +196,10 @@ fun CannedMessageConfigItemList(
 @Composable
 fun CannedMessageConfigPreview(){
     CannedMessageConfigItemList(
+        messages = "",
         cannedMessageConfig = CannedMessageConfig.getDefaultInstance(),
         enabled = true,
         focusManager = LocalFocusManager.current,
-        onSaveClicked = { },
+        onSaveClicked = { _, _ -> },
     )
 }

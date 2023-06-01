@@ -25,14 +25,15 @@ import com.geeksville.mesh.ui.components.SwitchPreference
 
 @Composable
 fun PositionConfigItemList(
-    positionInfo: Position?,
+    isLocal: Boolean = false,
+    location: Position?,
     positionConfig: PositionConfig,
     enabled: Boolean,
     focusManager: FocusManager,
-    onSaveClicked: (Pair<Position?, PositionConfig>) -> Unit,
+    onSaveClicked: (position: Position?, config: PositionConfig) -> Unit,
 ) {
-    var locationInput by remember(positionInfo) { mutableStateOf(positionInfo) }
-    var positionInput by remember(positionConfig) { mutableStateOf(positionConfig) }
+    var locationInput by remember { mutableStateOf(location) }
+    var positionInput by remember { mutableStateOf(positionConfig) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize()
@@ -93,7 +94,7 @@ fun PositionConfigItemList(
             item {
                 EditTextPreference(title = "Latitude",
                     value = locationInput?.latitude ?: 0.0,
-                    enabled = enabled,
+                    enabled = enabled && isLocal,
                     keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                     onValueChanged = { value ->
                         if (value >= -90 && value <= 90.0)
@@ -103,7 +104,7 @@ fun PositionConfigItemList(
             item {
                 EditTextPreference(title = "Longitude",
                     value = locationInput?.longitude ?: 0.0,
-                    enabled = enabled,
+                    enabled = enabled && isLocal,
                     keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                     onValueChanged = { value ->
                         if (value >= -180 && value <= 180.0)
@@ -113,7 +114,7 @@ fun PositionConfigItemList(
             item {
                 EditTextPreference(title = "Altitude (meters)",
                     value = locationInput?.altitude ?: 0,
-                    enabled = enabled,
+                    enabled = enabled && isLocal,
                     keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                     onValueChanged = { value ->
                         locationInput?.let { locationInput = it.copy(altitude = value) }
@@ -175,13 +176,13 @@ fun PositionConfigItemList(
 
         item {
             PreferenceFooter(
-                enabled = positionInput != positionConfig || locationInput != positionInfo,
+                enabled = positionInput != positionConfig || locationInput != location,
                 onCancelClicked = {
                     focusManager.clearFocus()
-                    locationInput = positionInfo
+                    locationInput = location
                     positionInput = positionConfig
                 },
-                onSaveClicked = { onSaveClicked(Pair(locationInput, positionInput)) }
+                onSaveClicked = { onSaveClicked(locationInput, positionInput) }
             )
         }
     }
@@ -191,10 +192,10 @@ fun PositionConfigItemList(
 @Composable
 fun PositionConfigPreview(){
     PositionConfigItemList(
-        positionInfo = null,
+        location = null,
         positionConfig = PositionConfig.getDefaultInstance(),
         enabled = true,
         focusManager = LocalFocusManager.current,
-        onSaveClicked = { },
+        onSaveClicked = { _, _ -> },
     )
 }

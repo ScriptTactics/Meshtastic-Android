@@ -56,6 +56,7 @@ class UsersFragment : ScreenFragment("Users"), Logging {
         private var nodes = arrayOf<NodeInfo>()
 
         private fun popup(view: View, position: Int) {
+            if (!model.isConnected()) return
             val node = nodes[position]
             val user = node.user
             val showAdmin = position == 0 || model.adminChannelIndex > 0
@@ -63,6 +64,7 @@ class UsersFragment : ScreenFragment("Users"), Logging {
             popup.inflate(R.menu.menu_nodes)
             popup.menu.setGroupVisible(R.id.group_remote, position > 0)
             popup.menu.setGroupVisible(R.id.group_admin, showAdmin)
+            popup.menu.setGroupEnabled(R.id.group_admin, !model.isManaged)
             popup.setOnMenuItemClickListener { item: MenuItem ->
                 when (item.itemId) {
                     R.id.direct_message -> {
@@ -93,55 +95,12 @@ class UsersFragment : ScreenFragment("Users"), Logging {
                             model.requestTraceroute(node.num)
                         }
                     }
-                    R.id.reboot -> {
-                        MaterialAlertDialogBuilder(requireContext())
-                            .setTitle("${getString(R.string.reboot)}\n${user?.longName}?")
-                            .setIcon(R.drawable.ic_twotone_warning_24)
-                            .setNeutralButton(R.string.cancel) { _, _ ->
-                            }
-                            .setPositiveButton(getString(R.string.okay)) { _, _ ->
-                                debug("User clicked requestReboot")
-                                model.requestReboot(node.num)
-                            }
-                            .show()
-                    }
-                    R.id.shutdown -> {
-                        MaterialAlertDialogBuilder(requireContext())
-                            .setTitle("${getString(R.string.shutdown)}\n${user?.longName}?")
-                            .setIcon(R.drawable.ic_twotone_warning_24)
-                            .setNeutralButton(R.string.cancel) { _, _ ->
-                            }
-                            .setPositiveButton(getString(R.string.okay)) { _, _ ->
-                                debug("User clicked requestShutdown")
-                                model.requestShutdown(node.num)
-                            }
-                            .show()
-                    }
-                    R.id.factory_reset -> {
-                        MaterialAlertDialogBuilder(requireContext())
-                            .setTitle("${getString(R.string.factory_reset)}\n${user?.longName}?")
-                            .setIcon(R.drawable.ic_twotone_warning_24)
-                            .setMessage(R.string.factory_reset_description)
-                            .setNeutralButton(R.string.cancel) { _, _ ->
-                            }
-                            .setPositiveButton(R.string.okay) { _, _ ->
-                                debug("User clicked requestFactoryReset")
-                                model.requestFactoryReset(node.num)
-                            }
-                            .show()
-                    }
-                    R.id.nodedb_reset -> {
-                        MaterialAlertDialogBuilder(requireContext())
-                            .setTitle("${getString(R.string.nodedb_reset)}\n${user?.longName}?")
-                            .setIcon(R.drawable.ic_twotone_warning_24)
-                            .setMessage(R.string.nodedb_reset_description)
-                            .setNeutralButton(R.string.cancel) { _, _ ->
-                            }
-                            .setPositiveButton(getString(R.string.okay)) { _, _ ->
-                                debug("User clicked requestNodedbReset")
-                                model.requestNodedbReset(node.num)
-                            }
-                            .show()
+                    R.id.remote_admin -> {
+                        debug("calling remote admin --> destNum: ${node.num}")
+                        parentFragmentManager.beginTransaction()
+                            .replace(R.id.mainActivityLayout, DeviceSettingsFragment(node))
+                            .addToBackStack(null)
+                            .commit()
                     }
                 }
                 true
@@ -254,20 +213,15 @@ class UsersFragment : ScreenFragment("Users"), Logging {
             }
 
             if (n.num == ourNodeInfo?.num) {
-                val info = model.myNodeInfo.value
-                if (info != null) {
-                    val text =
-                        String.format(
-                            "ChUtil %.1f%% AirUtilTX %.1f%%",
-                            n.deviceMetrics?.channelUtilization ?: info.channelUtilization,
-                            n.deviceMetrics?.airUtilTx ?: info.airUtilTx
-                        )
-                    holder.signalView.text = text
-                    holder.signalView.visibility = View.VISIBLE
-                }
+                val text = "ChUtil %.1f%% AirUtilTX %.1f%%".format(
+                    n.deviceMetrics?.channelUtilization,
+                    n.deviceMetrics?.airUtilTx
+                )
+                holder.signalView.text = text
+                holder.signalView.visibility = View.VISIBLE
             } else {
                 if ((n.snr < 100f) && (n.rssi < 0)) {
-                    val text = String.format("rssi:%d snr:%.1f", n.rssi, n.snr)
+                    val text = "rssi:%d snr:%.1f".format(n.rssi, n.snr)
                     holder.signalView.text = text
                     holder.signalView.visibility = View.VISIBLE
                 } else {
@@ -301,7 +255,7 @@ class UsersFragment : ScreenFragment("Users"), Logging {
         val (image, text) = when (battery) {
             in 0..100 -> Pair(
                 R.drawable.ic_battery_full_24,
-                String.format("%d%% %.2fV", battery, voltage ?: 0)
+                "%d%% %.2fV".format(battery, voltage ?: 0)
             )
             101 -> Pair(R.drawable.ic_power_plug_24, "")
             else -> Pair(R.drawable.ic_battery_full_24, "?")
@@ -327,18 +281,26 @@ class UsersFragment : ScreenFragment("Users"), Logging {
         binding.nodeListView.adapter = nodesAdapter
         binding.nodeListView.layoutManager = LinearLayoutManager(requireContext())
 
+        // ensure our local node is first (index 0)
+        fun Map<String, NodeInfo>.perhapsReindexBy(nodeNum: Int?): Array<NodeInfo> =
+            if (size > 1 && nodeNum != null && values.firstOrNull()?.num != nodeNum) {
+                values.partition { node -> node.num == nodeNum }.let { it.first + it.second }
+            } else {
+                values
+            }.toTypedArray()
+
         model.nodeDB.nodes.observe(viewLifecycleOwner) {
-            nodesAdapter.onNodesChanged(it.values.toTypedArray())
+            nodesAdapter.onNodesChanged(it.perhapsReindexBy(model.myNodeNum))
         }
 
         model.packetResponse.asLiveData().observe(viewLifecycleOwner) { meshLog ->
             meshLog?.meshPacket?.let { meshPacket ->
-                val routeList = meshLog.routeDiscovery?.routeList
+                val routeList = meshLog.routeDiscovery?.routeList ?: return@let
                 fun nodeName(num: Int) = model.nodeDB.nodesByNum?.get(num)?.user?.longName
 
-                var routeStr = "${nodeName(meshPacket.from)} --> "
-                routeList?.forEach { num -> routeStr += "${nodeName(num)} --> " }
-                routeStr += "${nodeName(meshPacket.to)}"
+                var routeStr = "${nodeName(meshPacket.to)} --> "
+                routeList.forEach { num -> routeStr += "${nodeName(num)} --> " }
+                routeStr += "${nodeName(meshPacket.from)}"
 
                 MaterialAlertDialogBuilder(requireContext())
                     .setTitle(R.string.traceroute)
